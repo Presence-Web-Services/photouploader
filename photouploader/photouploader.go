@@ -6,7 +6,6 @@
 package photouploader
 
 import (
-	// "log"
 	"strconv"
 	"context"
 	"io"
