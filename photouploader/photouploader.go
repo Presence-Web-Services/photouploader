@@ -6,7 +6,6 @@
 package photouploader
 
 import (
-	"log"
 	"strconv"
 	"context"
 	"io"
@@ -19,7 +18,6 @@ import (
 
 	"cloud.google.com/go/storage"
 	"google.golang.org/api/option"
-	"cloud.google.com/go/firestore"
 )
 
 var uploadNum = 0
@@ -273,7 +271,7 @@ func copyPhotosToBucket(request *http.Request) {
 
 	// create new photogroup in repository
 	cmd := exec.Command("./new-photogroup", strconv.Itoa(uploadNum), title, strconv.Itoa(numPhotos), captionString, typeString)
-	stdout, err := cmd.Output()
+	_, err = cmd.Output()
 	if err != nil {
 		status = http.StatusInternalServerError
 		errorMessage = "Error. Could not create new photogroup in repository."
