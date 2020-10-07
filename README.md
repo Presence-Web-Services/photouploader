@@ -1,6 +1,6 @@
 # photouploader
 
-Include `asset-bucket-sa-key.json` and `firestore-db-sa-key.json` in local install to connect.
+Include `asset-bucket-sa-key.json` in local install to connect.
 
 How to run:
 ```
