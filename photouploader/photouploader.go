@@ -252,21 +252,6 @@ func copyPhotosToBucket(request *http.Request) {
 	}
 	wg.Wait()
 
-	// update the DB with the relevant information
-	// dbClient := createFirestoreClient(context)
-	// _, _, err = dbClient.Collection("photos").Add(context, map[string]interface{}{
-	// 	"upload": uploadNum,
-	// 	"title": title,
-	// 	"numPhotos": numPhotos,
-	// 	"captions": captions,
-	// 	"types": types,
-	// })
-	// if err != nil {
-	// 	status = http.StatusInternalServerError
-	// 	errorMessage = "Error: Could not write photos to database"
-	// 	return
-	// }
-
 	var captionString string
 	var typeString string
 
@@ -315,16 +300,4 @@ func checkPhoto(size int64, contentType string) (err error) {
 		return
 	}
 	return
-}
-
-// createFirestoreClient creates a firestore DB client for connecting and updating the DB
-func createFirestoreClient(ctx context.Context) *firestore.Client {
-	projcetID := "growinggreen-website"
-	client, err := firestore.NewClient(ctx, projcetID)
-	if err != nil {
-		status = http.StatusInternalServerError
-		errorMessage = "Error: Could not create database client connection."
-		return nil
-	}
-	return client
 }
