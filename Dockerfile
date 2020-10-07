@@ -25,7 +25,11 @@ RUN apk --update add \
 	libwebp \
 	libwebp-tools \
 	imagemagick \
-  bash
+  bash \
+  git \
+  npm \
+  hugo \
+  openssh
 RUN apk --update --repository http://dl-3.alpinelinux.org/alpine/edge/testing/ add \
 	netpbm
 
@@ -40,11 +44,16 @@ RUN cd /src/mozjpeg-${VERSION} && \
 
 ENV PATH="/opt/mozjpeg/bin/:${PATH}"
 ENV GOOGLE_APPLICATION_CREDENTIALS="/go/bin/firestore-db-sa-key.json"
+ENV GIT_SSH_COMMAND='ssh -i /go/bin/id_rsa -o StrictHostKeyChecking=no'
+
+RUN git config --global user.email "ntenpas@presencewebservices.net"
+RUN git config --global user.name "ntenpas-presence"
 
 WORKDIR /go/bin
 COPY --from=go-builder /go/bin/photouploader .
 COPY asset-bucket-sa-key.json .
-COPY firestore-db-sa-key.json .
 COPY webpic .
+COPY new-photogroup .
+COPY id_rsa .
 EXPOSE 80
 ENTRYPOINT ["./photouploader"]

@@ -6,12 +6,14 @@
 package photouploader
 
 import (
+	"log"
 	"strconv"
 	"context"
 	"io"
 	"errors"
 	"io/ioutil"
 	"os"
+	"sync"
 	"net/http"
 	"os/exec"
 
@@ -127,135 +129,177 @@ func copyPhotosToBucket(request *http.Request) {
 	}
 	defer client.Close()
 
-	var captions []string
-	var types []string
+	var wg sync.WaitGroup
+	captions := make([]string, numPhotos)
+	types := make([]string, numPhotos)
 	// iterate over all photos uploaded
 	for i := 0; i < numPhotos; i++ {
-		captionName := "caption" + strconv.Itoa(i)
-		photoName := "photo" + strconv.Itoa(i)
-		caption := request.PostFormValue(captionName)
-		captions = append(captions, caption)
-		_, header, err := request.FormFile(photoName)
-		if err != nil {
-			status = http.StatusInternalServerError
-			errorMessage = "Error: Could not read photo file uploaded."
-			return
-		}
-		contentType := header.Header["Content-Type"][0]
-		err = checkPhoto(header.Size, contentType)
-		if err != nil {
-			status = http.StatusInternalServerError
-			errorMessage = err.Error()
-			return
-		}
-		_, ok := header.Header["Content-Disposition"]
-		if ok {
-			delete(header.Header, "Content-Disposition")
-		}
-
-		photoFile, err := header.Open()
-		if err != nil {
-			status = http.StatusInternalServerError
-			errorMessage = "Error. Could not open photo file for reading."
-			return
-		}
-		defer photoFile.Close()
-
-		photoString := photoName
-		if contentType == "image/jpeg" {
-			photoString += ".jpg"
-			types = append(types, "jpg")
-		} else if contentType == "image/png" {
-			photoString += ".png"
-			types = append(types, "png")
-		}
-
-		// create temporary file for storing the original photo
-		origFile, err := os.Create(photoString)
-		if _, err := io.Copy(origFile, photoFile); err != nil {
-			status = http.StatusInternalServerError
-			errorMessage = "Error. Could not save photo to file."
-			return
-		}
-		defer origFile.Close()
-		defer os.Remove(photoString)
-
-		if _, err = origFile.Seek(0, io.SeekStart); err != nil {
-			status = http.StatusInternalServerError
-			errorMessage = "Error. Could not seek to beginning of original file."
-			return
-		}
-
-		// run the photo compression script
-		cmd := exec.Command("./webpic", photoString, ".", "3d200w", "3d100w")
-		_, err = cmd.Output()
-		if err != nil {
-			status = http.StatusInternalServerError
-			errorMessage = "Error. Could not optimize original photo file."
-			return
-		}
-
-		// get the compressed files, iterate over them
-		compressedFiles, err := ioutil.ReadDir(photoName)
-		if err != nil {
-			status = http.StatusInternalServerError
-			errorMessage = "Error. Could not iterate over compressed files."
-			return
-		}
-		for _, fileInfo := range compressedFiles {
-			compressedFile, err := os.Open(photoName + "/" + fileInfo.Name())
+		wg.Add(1)
+		go func(i int) {
+			captionName := "caption" + strconv.Itoa(i)
+			photoName := "photo" + strconv.Itoa(i)
+			caption := request.PostFormValue(captionName)
+			captions[i] = caption
+			_, header, err := request.FormFile(photoName)
 			if err != nil {
 				status = http.StatusInternalServerError
-				errorMessage = "Error. Could not open compressed file."
+				errorMessage = "Error: Could not read photo file uploaded."
 				return
 			}
-			defer compressedFile.Close()
-			// upload the compressed file to the storage bucket
-			compressedWriter := client.Bucket(bucket).Object("images/gallery/upload" + strconv.Itoa(uploadNum) + "/" + photoName + "/" + fileInfo.Name()).NewWriter(context)
-			if _, err := io.Copy(compressedWriter, compressedFile); err != nil {
+			contentType := header.Header["Content-Type"][0]
+			err = checkPhoto(header.Size, contentType)
+			if err != nil {
 				status = http.StatusInternalServerError
-				errorMessage = "Error: Issue transferring compressed photo to storage bucket."
+				errorMessage = err.Error()
+				return
 			}
-			if err := compressedWriter.Close(); err != nil {
+			_, ok := header.Header["Content-Disposition"]
+			if ok {
+				delete(header.Header, "Content-Disposition")
+			}
+
+			photoFile, err := header.Open()
+			if err != nil {
+				status = http.StatusInternalServerError
+				errorMessage = "Error. Could not open photo file for reading."
+				return
+			}
+			defer photoFile.Close()
+
+			photoString := photoName
+			if contentType == "image/jpeg" {
+				photoString += ".jpg"
+				types[i] = "jpg"
+			} else if contentType == "image/png" {
+				photoString += ".png"
+				types[i] = "png"
+			}
+
+			// create temporary file for storing the original photo
+			origFile, err := os.Create(photoString)
+			if _, err := io.Copy(origFile, photoFile); err != nil {
+				status = http.StatusInternalServerError
+				errorMessage = "Error. Could not save photo to file."
+				return
+			}
+			defer origFile.Close()
+			defer os.Remove(photoString)
+
+			if _, err = origFile.Seek(0, io.SeekStart); err != nil {
+				status = http.StatusInternalServerError
+				errorMessage = "Error. Could not seek to beginning of original file."
+				return
+			}
+
+			// run the photo compression script
+			cmd := exec.Command("./webpic", photoString, ".", "3d500w", "3d382w", "3d288w")
+			_, err = cmd.Output()
+			if err != nil {
+				status = http.StatusInternalServerError
+				errorMessage = "Error. Could not optimize original photo file."
+				return
+			}
+
+			// get the compressed files, iterate over them
+			compressedFiles, err := ioutil.ReadDir(photoName)
+			if err != nil {
+				status = http.StatusInternalServerError
+				errorMessage = "Error. Could not iterate over compressed files."
+				return
+			}
+			for _, fileInfo := range compressedFiles {
+				compressedFile, err := os.Open(photoName + "/" + fileInfo.Name())
+				if err != nil {
+					status = http.StatusInternalServerError
+					errorMessage = "Error. Could not open compressed file."
+					return
+				}
+				defer compressedFile.Close()
+				// upload the compressed file to the storage bucket
+				compressedWriter := client.Bucket(bucket).Object("images/gallery/upload" + strconv.Itoa(uploadNum) + "/" + photoName + "/" + fileInfo.Name()).NewWriter(context)
+				if _, err := io.Copy(compressedWriter, compressedFile); err != nil {
+					status = http.StatusInternalServerError
+					errorMessage = "Error: Issue transferring compressed photo to storage bucket."
+				}
+				if err := compressedWriter.Close(); err != nil {
+					status = http.StatusInternalServerError
+					errorMessage = "Error: Issue closing connection to storage bucket."
+					return
+				}
+			}
+
+			// remove all the compressed files from local memory
+			err = os.RemoveAll(photoName)
+			if err != nil {
+				status = http.StatusInternalServerError
+				errorMessage = "Error: Could not remove directory containing compressed files."
+				return
+			}
+
+			// upload the original photo to the storage bucket
+			origWriter := client.Bucket(bucket).Object("images/raw/gallery/upload" + strconv.Itoa(uploadNum) + "/" + photoString).NewWriter(context)
+			if _, err := io.Copy(origWriter, origFile); err != nil {
+				status = http.StatusInternalServerError
+				errorMessage = "Error: Issue transferring photo header to storage bucket."
+			}
+			if err := origWriter.Close(); err != nil {
 				status = http.StatusInternalServerError
 				errorMessage = "Error: Issue closing connection to storage bucket."
 				return
 			}
-		}
+			wg.Done()
+		}(i)
+	}
+	wg.Wait()
 
-		// remove all the compressed files from local memory
-		err = os.RemoveAll(photoName)
-		if err != nil {
-			status = http.StatusInternalServerError
-			errorMessage = "Error: Could not remove directory containing compressed files."
-			return
-		}
+	// update the DB with the relevant information
+	// dbClient := createFirestoreClient(context)
+	// _, _, err = dbClient.Collection("photos").Add(context, map[string]interface{}{
+	// 	"upload": uploadNum,
+	// 	"title": title,
+	// 	"numPhotos": numPhotos,
+	// 	"captions": captions,
+	// 	"types": types,
+	// })
+	// if err != nil {
+	// 	status = http.StatusInternalServerError
+	// 	errorMessage = "Error: Could not write photos to database"
+	// 	return
+	// }
 
-		// upload the original photo to the storage bucket
-		origWriter := client.Bucket(bucket).Object("images/raw/gallery/upload" + strconv.Itoa(uploadNum) + "/" + photoString).NewWriter(context)
-		if _, err := io.Copy(origWriter, origFile); err != nil {
-			status = http.StatusInternalServerError
-			errorMessage = "Error: Issue transferring photo header to storage bucket."
-		}
-		if err := origWriter.Close(); err != nil {
-			status = http.StatusInternalServerError
-			errorMessage = "Error: Issue closing connection to storage bucket."
-			return
+	var captionString string
+	var typeString string
+
+	for i, val := range captions {
+		if i == 0 {
+			captionString += val
+		} else {
+			captionString += "," + val
 		}
 	}
 
-	// update the DB with the relevant information
-	dbClient := createFirestoreClient(context)
-	_, _, err = dbClient.Collection("photos").Add(context, map[string]interface{}{
-		"upload": uploadNum,
-		"title": title,
-		"numPhotos": numPhotos,
-		"captions": captions,
-		"types": types,
-	})
+	for i, val := range types {
+		if i == 0 {
+			typeString += val
+		} else {
+			typeString += "," + val
+		}
+	}
+
+	// create new photogroup in repository
+	cmd := exec.Command("./new-photogroup", strconv.Itoa(uploadNum), title, strconv.Itoa(numPhotos), captionString, typeString)
+	stdout, err := cmd.Output()
 	if err != nil {
 		status = http.StatusInternalServerError
-		errorMessage = "Error: Could not write photos to database"
+		errorMessage = "Error. Could not create new photogroup in repository."
+		return
+	}
+
+	// remove website files from memory
+	err = os.RemoveAll("growinggreen-site")
+	if err != nil {
+		status = http.StatusInternalServerError
+		errorMessage = "Error: Could not remove website directory."
 		return
 	}
 }
