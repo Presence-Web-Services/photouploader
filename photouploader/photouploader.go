@@ -6,20 +6,22 @@
 package photouploader
 
 import (
+	"log"
 	"strconv"
 	"context"
 	"io"
 	"errors"
-	"io/ioutil"
 	"os"
 	"sync"
 	"net/http"
-	"os/exec"
 
 	"cloud.google.com/go/storage"
 	"google.golang.org/api/option"
+	"github.com/presence-web-services/gmailer/v2"
+	"github.com/joho/godotenv"
 )
 
+var config gmailer.Config
 var uploadNum = 0
 // default important values
 var status = http.StatusOK
@@ -28,6 +30,41 @@ var title = ""
 var passphrase = ""
 var photos = ""
 var numPhotos = 0
+
+// init loads environment variables and authenticates the gmailer config
+func init() {
+	loadEnvVars()
+	authenticate()
+}
+
+// loadEnvVars loads environment variables from a .env file
+func loadEnvVars() {
+	err := godotenv.Load()
+	if err != nil {
+		log.Fatal("Error: Could not load environment variables from .env file.")
+	}
+	config.ClientID = os.Getenv("CLIENT_ID")
+	config.ClientSecret = os.Getenv("CLIENT_SECRET")
+	config.AccessToken = os.Getenv("ACCESS_TOKEN")
+	config.RefreshToken = os.Getenv("REFRESH_TOKEN")
+	config.EmailTo = os.Getenv("EMAIL_TO")
+	config.EmailFrom = os.Getenv("EMAIL_FROM")
+	config.ReplyTo = os.Getenv("EMAIL_FROM")
+	config.Subject = os.Getenv("SUBJECT")
+	if os.Getenv("HP") == "true" {
+		config.HP = true
+	} else {
+		config.HP = false
+	}
+}
+
+// authenticate authenticates a gmailer config
+func authenticate() {
+	err := config.Authenticate()
+	if err != nil {
+		log.Fatal("Error: Could not authenticate with GMail OAuth using credentials.")
+	}
+}
 
 // CreateAndRun creates a http server that listens for photo data. You may set the upload beginning offset here.
 func CreateAndRun(port string, uploadOffset int) {
@@ -75,6 +112,7 @@ func defaultValues() {
 	title = ""
 	passphrase = ""
 	numPhotos = 0
+	config.Body = ""
 }
 
 // verifyPost ensures that a POST is sent
@@ -129,7 +167,7 @@ func copyPhotosToBucket(request *http.Request) {
 
 	var wg sync.WaitGroup
 	captions := make([]string, numPhotos)
-	types := make([]string, numPhotos)
+	photoStrings := make([]string, numPhotos)
 	// iterate over all photos uploaded
 	for i := 0; i < numPhotos; i++ {
 		wg.Add(1)
@@ -167,11 +205,10 @@ func copyPhotosToBucket(request *http.Request) {
 			photoString := photoName
 			if contentType == "image/jpeg" {
 				photoString += ".jpg"
-				types[i] = "jpg"
 			} else if contentType == "image/png" {
 				photoString += ".png"
-				types[i] = "png"
 			}
+			photoStrings[i] = photoString
 
 			// upload the original photo to the storage bucket
 			origWriter := client.Bucket(bucket).Object("images/raw/gallery/upload" + strconv.Itoa(uploadNum) + "/" + photoString).NewWriter(context)
@@ -188,6 +225,12 @@ func copyPhotosToBucket(request *http.Request) {
 		}(i)
 	}
 	wg.Wait()
+	config.Body += "Upload: " + strconv.Itoa(uploadNum) + "\n"
+	config.Body += "Title: " + title + "\n"
+	for i := 0; i < numPhotos; i++ {
+		config.Body += photoStrings[i] + ": " + captions[i] + "\n"
+	}
+	sendEmail()
 }
 
 // checkPhoto checks that the size of the photo is not 0, and makes sure the content type is JPEG or PNG
@@ -201,4 +244,14 @@ func checkPhoto(size int64, contentType string) (err error) {
 		return
 	}
 	return
+}
+
+// sendEmail sends an email given a gmailer config
+func sendEmail() {
+	err := config.Send()
+	if err != nil {
+		status = http.StatusInternalServerError
+		errorMessage = "Error: Internal server error."
+		return
+	}
 }
