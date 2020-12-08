@@ -15,6 +15,5 @@ FROM alpine
 WORKDIR /go/bin
 COPY --from=go-builder /go/bin/photouploader .
 COPY asset-bucket-sa-key.json .
-COPY .env .
 EXPOSE 80
 ENTRYPOINT ["./photouploader"]
